@@ -1,0 +1,4 @@
+#pragma once
+
+#define LIBDECOMP_VERSION_MAJOR @libdecomp_VERSION_MAJOR@
+#define LIBDECOMP_VERSION_MINOR @libdecomp_VERSION_MINOR@
