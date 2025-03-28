@@ -1,5 +1,4 @@
 #include <libdecomp/libdecomp.h>
-#include "version.h"
 
 int DC_Version(int *major, int *minor)
 {

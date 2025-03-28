@@ -11,16 +11,19 @@ endif()
 
 add_compile_options(-g)
 
-configure_file(version.h.in version.h)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
 file(GLOB_RECURSE LIBDECOMP_GLOB_SRC CONFIGURE_DEPENDS "libdecomp/*.c")
 file(GLOB_RECURSE LIBDECOMP_GLOB_HDR CONFIGURE_DEPENDS "include/*.h")
 
 add_library(decomp ${LIB_TYPE} ${LIBDECOMP_GLOB_SRC})
-target_link_libraries(decomp)
 target_include_directories(decomp PUBLIC ${CMAKE_SOURCE_DIR}/include)
 set_target_properties(decomp PROPERTIES VERSION ${PROJECT_VERSION})
+
+target_compile_definitions(decomp PRIVATE
+    -DLIBDECOMP_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+    -DLIBDECOMP_VERSION_MINOR=${PROJECT_VERSION_MINOR}
+)
 
 install(TARGETS decomp
         LIBRARY DESTINATION lib
