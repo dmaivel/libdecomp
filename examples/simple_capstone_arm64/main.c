@@ -55,8 +55,8 @@ int main()
     char buffer[1024];
     DC_ProgramDecompile(program, 
                         BASE_ADDRESS, 
-                        data, sizeof(data),
-                        buffer, sizeof(buffer));
+                        buffer, 
+                        sizeof(buffer));
 
     printf("%s", buffer);
     return 0;

@@ -251,16 +251,36 @@ void DC_ProgramSetImage(DCProgram *program,
                         void *ctx, 
                         size_t count);
 
+/**
+* @brief Set disassembler backend
+*
+* @param program Program
+* @param backend Disassembler interface
+*/
 void DC_ProgramSetBackend(DCProgram *program,
                           DCDisassemblerBackend *backend);
 
+/**
+* @brief Set output formatter
+*
+* @param program Program
+* @param formatter Output formatter
+*/
 void DC_ProgramSetFormatter(DCProgram *program,
                             struct DCFormatterContext *formatter);
 
+/**
+* @brief Decompile `program` as if it were loaded at `base_address`
+*
+* @param program Program
+* @param base_address Base address of program
+* @param dst Destination buffer
+* @param n Size of destination buffer
+*
+* @return DCError
+*/
 DCError DC_ProgramDecompile(DCProgram *program, 
                             uint64_t base_address, 
-                            const uint8_t *code, 
-                            const size_t size,
                             char *dst,
                             const size_t n);
 

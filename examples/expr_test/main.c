@@ -40,8 +40,8 @@ int main()
     char buffer[1024];
     DC_ProgramDecompile(program, 
                         BASE_ADDRESS, 
-                        data, sizeof(data),
-                        buffer, sizeof(buffer));
+                        buffer, 
+                        sizeof(buffer));
 
     char *expected = "u32()[v0:u32,v1:u32]{v0=123,v1=321,v0=(v0+v1),__return__(v0)}";
 

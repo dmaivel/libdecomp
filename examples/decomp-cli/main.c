@@ -162,8 +162,8 @@ int main(int argc, char **argv)
     char buffer[1024];
     DC_ProgramDecompile(program, 
                         BASE_ADDRESS, 
-                        data, sizeof(data),
-                        buffer, sizeof(buffer));
+                        buffer, 
+                        sizeof(buffer));
 
     printf("%s", buffer);
     free(data);

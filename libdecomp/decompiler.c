@@ -1050,8 +1050,6 @@ static void print_routine(DCFormatterContext formatter, DCDisassemblerBackend ba
 
 DCError DC_ProgramDecompile(DCProgram *program, 
                             uint64_t base_address, 
-                            const uint8_t *code, 
-                            const size_t size,
                             char *dst,
                             const size_t n)
 {
