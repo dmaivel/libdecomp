@@ -29,10 +29,8 @@ Library for decompiling multi-architecture bytecode into source code.
 ```bash
 git clone https://github.com/dmaivel/libdecomp.git
 cd libdecomp
-mkdir build
-cd build
-cmake ..
-cmake --build . --config Release
+cmake -B build
+cmake --build build --config Release
 ```
 
 #### Installation 
