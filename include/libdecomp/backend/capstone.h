@@ -146,6 +146,9 @@ static int dc_cs_operand_register_index(DCDisassemblerBackend *self, void *oobj)
     }
 }
 
+/*
+ * i think i forgot other architectures (to-do)
+ */
 static int dc_cs_operand_register_largest_enclosing_index(DCDisassemblerBackend *self, int index)
 {
     static const int table_x86_64[] = { 0,
@@ -296,9 +299,9 @@ static bool dc_cs_operand_cmp(DCDisassemblerBackend *self, void *oobj0, void *oo
             return false;
         
         switch (op1->type) {
-        case X86_OP_REG:
+        case ARM64_OP_REG:
             return op1->reg == op2->reg;
-        case X86_OP_MEM:
+        case ARM64_OP_MEM:
             return (
                    op1->mem.base == op2->mem.base &&
                    op1->mem.index == op2->mem.index &&
