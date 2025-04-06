@@ -273,14 +273,12 @@ void DC_ProgramSetFormatter(DCProgram *program,
 * @brief Decompile `program` as if it were loaded at `base_address`
 *
 * @param program Program
-* @param base_address Base address of program
 * @param dst Destination buffer
 * @param n Size of destination buffer
 *
 * @return DCError
 */
 DCError DC_ProgramDecompile(DCProgram *program, 
-                            uint64_t base_address, 
                             char *dst,
                             const size_t n);
 
