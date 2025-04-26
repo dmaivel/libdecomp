@@ -18,7 +18,7 @@ typedef struct DCDisassemblerBackend {
     void *backend_dependent_data;
 
     /**
-    * @brief Return true if the provided instruct is an unconditional branch
+    * @brief Return true if the provided instruction is an unconditional branch
     *
     * @param iobj Pointer to the instruction structure
     * @return status
@@ -26,12 +26,26 @@ typedef struct DCDisassemblerBackend {
     bool(*instruction_is_jump)(struct DCDisassemblerBackend *self, void *iobj);
 
     /**
-    * @brief Return true if the provided instruct is an conditional branch
+    * @brief Return true if the provided instruction is an conditional branch
     *
     * @param iobj Pointer to the instruction structure
     * @return status
     */
     bool(*instruction_is_jcc)(struct DCDisassemblerBackend *self, void *iobj);
+
+    /**
+    * @brief Return true if the provided instruction is a call
+    *
+    * @param iobj Pointer to the instruction structure
+    */
+    bool(*instruction_is_call)(struct DCDisassemblerBackend *self, void *iobj);
+
+    /**
+    * @brief Return true if the provided instruction is a ret
+    *
+    * @param iobj Pointer to the instruction structure
+    */
+    bool(*instruction_is_ret)(struct DCDisassemblerBackend *self, void *iobj);
 
     /**
     * @brief Return the address the branch instructions target

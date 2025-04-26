@@ -42,7 +42,7 @@ int main()
                         buffer, 
                         sizeof(buffer));
 
-    char *expected = "u32()[v0:u32,v1:u32]{v0=123,v1=321,v0=(v0+v1),__return__(v0)}";
+    char *expected = "u32@1000()[v0:u32,v1:u32]{v0=123,v1=321,v0=(v0+v1),__return__(v0)}";
 
     assert(strcmp(buffer, expected) == 0);
     printf("passed\n");

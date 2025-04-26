@@ -3,6 +3,7 @@
 
 #include "../backend.h"
 #include "../libdecomp.h"
+#include "capstone/arm64.h"
 #include <assert.h>
 #include <capstone/capstone.h>
 #include <stdio.h>
@@ -39,6 +40,34 @@ static bool dc_cs_instruction_is_jcc(DCDisassemblerBackend *self, void *iobj)
         return ins->id != X86_INS_JMP;
     case CS_ARCH_ARM64:
         return ins->id == ARM64_INS_B && (ins->detail->arm64.cc != ARM64_CC_AL && ins->detail->arm64.cc != ARM64_CC_NV && ins->detail->arm64.cc != 0);
+    default:
+        return false;
+    }
+}
+
+static bool dc_cs_instruction_is_call(DCDisassemblerBackend *self, void *iobj)
+{
+    cs_insn *ins = iobj;
+
+    switch (get_arch(self)) {
+    case CS_ARCH_X86:
+        return ins->id == X86_INS_CALL;
+    case CS_ARCH_ARM64:
+        return ins->id == ARM64_INS_BL;
+    default:
+        return false;
+    }
+}
+
+static bool dc_cs_instruction_is_ret(DCDisassemblerBackend *self, void *iobj)
+{
+    cs_insn *ins = iobj;
+
+    switch (get_arch(self)) {
+    case CS_ARCH_X86:
+        return ins->id == X86_INS_RET;
+    case CS_ARCH_ARM64:
+        return ins->id == ARM64_INS_RET;
     default:
         return false;
     }
@@ -378,6 +407,12 @@ static inline DCLangOpcodeEnum dc_cs_to_il_opcode(DCDisassemblerBackend *self, i
     return DC_IL_INVALID;
 }
 
+static inline bool arm64_ignore(cs_arm64_op *op)
+{
+    if (op->type != ARM64_OP_REG) return false;
+    return op->reg == ARM64_REG_X30 || op->reg == ARM64_REG_X29 || op->reg == ARM64_REG_SP;
+}
+
 static void dc_cs_lift_instruction(DCDisassemblerBackend *self, void *iobj, void *il_routinev, void *il_basic_block)
 {
     DCDisassemblerBackend backend = *self;
@@ -435,6 +470,10 @@ static void dc_cs_lift_instruction(DCDisassemblerBackend *self, void *iobj, void
             il_bb->go_to = (void*)self->instruction_get_jump_target(self, ins);
             add_ins(&il_bb->instructions, (DCLangInstruction){ .opcode = DC_IL_JMP });
             break;
+        case X86_INS_CALL:
+            add_ins(&il_bb->instructions, (DCLangInstruction){ .opcode = DC_IL_CALL, .immediate = self->instruction_get_jump_target(self, ins) });
+            add_ins(&il_bb->instructions, (DCLangInstruction){ .opcode = DC_IL_STORE, .variable = NULL, .size = 32 });
+            break;
         case X86_INS_RET:
             {
                 for (DCLangVariable *v = il_routine->variables; v; v = v->next)
@@ -452,18 +491,26 @@ static void dc_cs_lift_instruction(DCDisassemblerBackend *self, void *iobj, void
         switch (ins->id) {
         case ARM64_INS_MOV:
         case ARM64_INS_LDR:
+            if (arm64_ignore(&ins->detail->arm64.operands[0]) || arm64_ignore(&ins->detail->arm64.operands[1]))
+                break;
             il_load(backend, il_routine, il_bb, &ins->detail->arm64.operands[1]);
             il_store(backend, il_routine, il_bb, &ins->detail->arm64.operands[0]);
             break;
         case ARM64_INS_STR:
+            if (arm64_ignore(&ins->detail->arm64.operands[0]) || arm64_ignore(&ins->detail->arm64.operands[1]))
+                break;
             il_load(backend, il_routine, il_bb, &ins->detail->arm64.operands[0]);
             il_store(backend, il_routine, il_bb, &ins->detail->arm64.operands[1]);
+            break;
+        case ARM64_INS_LDP:
             break;
         case ARM64_INS_ADD:
         case ARM64_INS_SUB:
         case ARM64_INS_SHL:
             /*
              * ignore stack setup, we should probably save this somewhere? (to-do)
+             * also why did i use DC_DISASM_... here?? (to-do figure out)
+             * maybe i just use arm64_ignore here?? (to-do again)
              */
             if (self->operand_get_type(self, &ins->detail->arm64.operands[0]) == DC_DISASM_OPERAND_REG
                 && self->operand_get_type(self, &ins->detail->arm64.operands[1]) == DC_DISASM_OPERAND_REG
@@ -500,6 +547,10 @@ static void dc_cs_lift_instruction(DCDisassemblerBackend *self, void *iobj, void
                 add_ins(&il_bb->instructions, (DCLangInstruction){ .opcode = DC_IL_JMP });
             }
             break;
+        case ARM64_INS_BL:
+            add_ins(&il_bb->instructions, (DCLangInstruction){ .opcode = DC_IL_CALL, .immediate = self->instruction_get_jump_target(self, ins) });
+            add_ins(&il_bb->instructions, (DCLangInstruction){ .opcode = DC_IL_STORE, .variable = NULL, .size = 32 });
+            break;
         case ARM64_INS_RET:
             {
                 for (DCLangVariable *v = il_routine->variables; v; v = v->next)
@@ -529,6 +580,8 @@ static DCDisassemblerBackend DC_DisassemblerCapstone(cs_arch arch, cs_mode mode)
         .backend_dependent_data = data,
         .instruction_is_jump = dc_cs_instruction_is_jump,
         .instruction_is_jcc = dc_cs_instruction_is_jcc,
+        .instruction_is_call = dc_cs_instruction_is_call,
+        .instruction_is_ret = dc_cs_instruction_is_ret,
         .instruction_get_jump_target = dc_cs_instruction_get_jump_target,
         .instruction_get_jump_passed = dc_cs_instruction_get_jump_passed,
         .instruction_get_address = dc_cs_instruction_get_address,

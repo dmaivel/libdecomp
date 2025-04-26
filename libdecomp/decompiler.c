@@ -246,6 +246,16 @@ static inline void *il_resolve(DCLangBasicBlock *basic_blocks, void *vaddress)
     return NULL;
 }
 
+static inline void *il_resolve_routine(DCProgram *program, uint64_t address)
+{
+    for (DCLangRoutine *routine = program->lang_routines; routine; routine = routine->next) {
+        if (address >= routine->basic_blocks[0].native_start_va && address < routine->basic_blocks[0].native_end_va)
+            return routine;
+    }
+
+    return NULL;
+}
+
 void bb_visit(DCVisitor *visit, DCLangBasicBlock *bb)
 {
     if (bb == NULL) return;
@@ -376,7 +386,7 @@ static DCControlNode *dc_traverse(DCLangBasicBlock *root)
     return nodes;
 }
 
-static DCLangOpcodeEnum dc_eval(DCFormatterContext formatter, char *dst, size_t n, DCLangBasicBlock *il_bb, DCStackElement **stack, DCStackElement **last, int indents, char *cmp0, char *cmp1, bool out)
+static DCLangOpcodeEnum dc_eval(DCProgram *program, DCFormatterContext formatter, char *dst, size_t n, DCLangBasicBlock *il_bb, DCStackElement **stack, DCStackElement **last, int indents, char *cmp0, char *cmp1, bool out)
 {
     char elem[BUFFER_DEFAULT_LENGTH], elem2[BUFFER_DEFAULT_LENGTH], elem3[BUFFER_DEFAULT_LENGTH];
     char op[3];
@@ -461,6 +471,25 @@ static DCLangOpcodeEnum dc_eval(DCFormatterContext formatter, char *dst, size_t 
         case DC_IL_JS:
             jmp_op = i->opcode;
             break;
+        case DC_IL_CALL:
+            if (out) {
+                DCLangRoutine *routine = il_resolve_routine(program, i->immediate);
+
+                strcpy(elem, "");
+
+                /*
+                 * to-do: function parameters
+                 */
+                
+                DC_FormatAppendRoutine(&formatter, elem, sizeof(elem), routine);
+                DC_FormatAppend(elem, sizeof(elem), "()");
+
+                dc_stack_push(stack, last, elem);
+                
+                // DC_FormatAppend(dst, n, "%s%lx()%s", formatter.routine_prefix, i->immediate, formatter.endline);
+                /*DC_FormatAppendRoutine(&formatter, dst, n, )*/
+            }
+            break;
         case DC_IL_RET:
             dc_stack_pop(stack, last, elem2);
             if (out) {
@@ -484,7 +513,7 @@ static DCLangOpcodeEnum dc_eval(DCFormatterContext formatter, char *dst, size_t 
     return jmp_op;
 }
 
-DCControlNode *dc_emitter(DCFormatterContext formatter, char *dst, size_t n, DCControlNode *node, DCStackElement **stack, DCStackElement **last) 
+DCControlNode *dc_emitter(DCProgram *program, DCFormatterContext formatter, char *dst, size_t n, DCControlNode *node, DCStackElement **stack, DCStackElement **last) 
 {
     if (node == NULL) return NULL;
 
@@ -493,14 +522,14 @@ DCControlNode *dc_emitter(DCFormatterContext formatter, char *dst, size_t n, DCC
     char op[4];
     char cmp0[BUFFER_DEFAULT_LENGTH], cmp1[BUFFER_DEFAULT_LENGTH];
 
-    DCLangOpcodeEnum jmp_op = dc_eval(formatter, dst, n, il_bb, stack, last, node->level + 1, cmp0, cmp1, node->type != CONTROL_NODE_WHILE);
+    DCLangOpcodeEnum jmp_op = dc_eval(program, formatter, dst, n, il_bb, stack, last, node->level + 1, cmp0, cmp1, node->type != CONTROL_NODE_WHILE);
     
     if (node->type == CONTROL_NODE_IF_ELSE) {
         il2strop(jmp_op, op);
         DC_FormatIndent(&formatter, dst, n, node->level + 1);
         formatter.implementation.fmt_conditional_header(&formatter, dst, n, node->type, cmp0, cmp1, op);
         
-        DCControlNode *next_node = dc_emitter(formatter, dst, n, node->next, stack, last);
+        DCControlNode *next_node = dc_emitter(program, formatter, dst, n, node->next, stack, last);
         
         DC_FormatIndent(&formatter, dst, n, node->level + 1);
         formatter.implementation.fmt_header_epilogue(&formatter, dst, n);
@@ -508,12 +537,12 @@ DCControlNode *dc_emitter(DCFormatterContext formatter, char *dst, size_t n, DCC
         DC_FormatIndent(&formatter, dst, n, node->level + 1);
         formatter.implementation.fmt_else_header(&formatter, dst, n);
 
-        dc_emitter(formatter, dst, n, next_node, stack, last);
+        dc_emitter(program, formatter, dst, n, next_node, stack, last);
         
         DC_FormatIndent(&formatter, dst, n, node->level + 1);
         formatter.implementation.fmt_header_epilogue(&formatter, dst, n);
         
-        return dc_emitter(formatter, dst, n, node->next_in_level, stack, last);
+        return dc_emitter(program, formatter, dst, n, node->next_in_level, stack, last);
     }
     else if (node->type == CONTROL_NODE_IF) {
         if (node->next->scope == CONTROL_NODE_SCOPE_FALSE)
@@ -524,12 +553,12 @@ DCControlNode *dc_emitter(DCFormatterContext formatter, char *dst, size_t n, DCC
         DC_FormatIndent(&formatter, dst, n, node->level + 1);
         formatter.implementation.fmt_conditional_header(&formatter, dst, n, node->type, cmp0, cmp1, op);
         
-        dc_emitter(formatter, dst, n, node->next, stack, last);
+        dc_emitter(program, formatter, dst, n, node->next, stack, last);
         
         DC_FormatIndent(&formatter, dst, n, node->level + 1);
         formatter.implementation.fmt_header_epilogue(&formatter, dst, n);
 
-        return dc_emitter(formatter, dst, n, node->next_in_level, stack, last);
+        return dc_emitter(program, formatter, dst, n, node->next_in_level, stack, last);
     }
     else if (node->type == CONTROL_NODE_WHILE) {
         il2strop(jmp_op, op);
@@ -537,19 +566,19 @@ DCControlNode *dc_emitter(DCFormatterContext formatter, char *dst, size_t n, DCC
         DC_FormatIndent(&formatter, dst, n, node->level + 1);
         formatter.implementation.fmt_conditional_header(&formatter, dst, n, node->type, cmp0, cmp1, op);
         
-        dc_emitter(formatter, dst, n, node->next, stack, last);
-        dc_eval(formatter, dst, n, il_bb, stack, last, node->level + 2, cmp0, cmp1, true);
+        dc_emitter(program, formatter, dst, n, node->next, stack, last);
+        dc_eval(program, formatter, dst, n, il_bb, stack, last, node->level + 2, cmp0, cmp1, true);
         
         DC_FormatIndent(&formatter, dst, n, node->level + 1);
         formatter.implementation.fmt_header_epilogue(&formatter, dst, n);
-        return dc_emitter(formatter, dst, n, node->next_in_level, stack, last);
+        return dc_emitter(program, formatter, dst, n, node->next_in_level, stack, last);
     }
     else if (node->scope == CONTROL_NODE_SCOPE_NONE) {
         if (node->next_in_level) {
             if (node->next_in_level->parent == node->parent)
-                dc_emitter(formatter, dst, n, node->next_in_level, stack, last);
+                dc_emitter(program, formatter, dst, n, node->next_in_level, stack, last);
         }
-        else dc_emitter(formatter, dst, n, node->next_in_level, stack, last);
+        else dc_emitter(program, formatter, dst, n, node->next_in_level, stack, last);
     }
 
     if (node) return node->next;
@@ -859,6 +888,10 @@ void dc_optimizer_simplify_shifts(DCLangRoutine *routine)
     }
 }
 
+/*
+ * to-do: unified eval function. ideally, we dont want this buffer functions bc the implementation
+ * can begin to vary between them
+ */
 bool operation_to_be_compared(DCLangInstruction *root[], int offset, int max, DCLangVariable *track)
 {
     DCLangVariable *stack[16] = { NULL };
@@ -914,7 +947,6 @@ void dc_optimizer_copy_propagation_safe(DCControlNode *root)
 
             DCLangVariable *src = i0->variable;
             DCLangVariable *dst = i1->variable;
-
 
             for (DCLangInstruction *k = i1->next; k; k = k->next) {
                 if (k->opcode == DC_IL_STORE && (k->variable == src || k->variable == dst))
@@ -1031,21 +1063,87 @@ void dc_optimizer_copy_propagation(DCControlNode *root)
     /*} */
 }
 
-static void print_routine(DCFormatterContext formatter, DCDisassemblerBackend backend, DCLangRoutine *il_routine, DCControlNode *nodes, char *dst, size_t n)
+static void print_routine(DCProgram *program, DCFormatterContext formatter, DCDisassemblerBackend backend, DCLangRoutine *il_routine, DCControlNode *nodes, char *dst, size_t n)
 {
-    DCLangVariable *result = NULL;
-    for (DCLangVariable *v = il_routine->variables; v; v = v->next)
-        if (backend.operand_is_ret_val(&backend, v->native_operand)) {
-            il_routine->retval = v;
-            break;
-        }
-
     formatter.implementation.fmt_function_header(&formatter, dst, n, il_routine);
 
     DCStackElement *stack = NULL, *last = NULL;
-    dc_emitter(formatter, dst, n, nodes, &stack, &last);
+    dc_emitter(program, formatter, dst, n, nodes, &stack, &last);
 
     formatter.implementation.fmt_header_epilogue(&formatter, dst, n);
+}
+
+static int qsort_cmp(const void *a, const void *b)
+{
+    uint64_t x = *(uint64_t*)a;
+    uint64_t y = *(uint64_t*)b;
+    return (x > y) - (x < y);
+}
+
+DCNativeRoutine *dc_native_routine_create(DCProgram *program,
+                                          DCNativeRoutine data)
+{
+    DCNativeRoutine *rout = dynarr_alloc((void**)&program->native_routines, 
+                                            sizeof(DCNativeRoutine));
+    
+    memcpy(rout, &data, sizeof(DCNativeRoutine));
+    rout->next = NULL;
+    return rout;
+}
+
+static void split_routines(DCProgram *program)
+{
+    DCDisassemblerBackend backend = *program->disasm_backend;
+    
+    DCVisitor *visit = dc_visitor_create(128);
+    uintptr_t start_va = -1;
+    uintptr_t end_va = 0;
+
+    for (size_t i = 0; i < program->query_len; i++) {
+        void *ins = program->query_callback(program->query_ctx, i);
+        end_va = backend.instruction_get_address(&backend, ins);
+        if (start_va == -1) { start_va = end_va; dc_visitor_add(visit, end_va); }
+
+        if (backend.instruction_is_call(&backend, ins))
+            dc_visitor_add(visit, backend.instruction_get_jump_target(&backend, ins));
+
+        if (backend.instruction_is_ret(&backend, ins) && i + 1 < program->query_len)
+            dc_visitor_add(visit, backend.instruction_get_address(&backend, program->query_callback(program->query_ctx, i + 1)));
+    }
+
+    uint64_t *addresses = dc_visitor_get_compressed(visit);
+    qsort(addresses, visit->count, sizeof(uint64_t), qsort_cmp);
+
+    DCNativeRoutine *current = dc_native_routine_create(program, (DCNativeRoutine){
+        .start_va = start_va
+    });
+
+    size_t last_instruction_idx = 0;
+    for (int i = 0; i < visit->count; i++) {
+        /*
+         * this is a really stupid hack (to-do), mostly bc im lazy
+         */
+        uint64_t end_address = i + 1 < visit->count ? addresses[i + 1] : backend.instruction_get_address(&backend, program->query_callback(program->query_ctx, program->query_len - 1)); 
+
+        current->query_begin = last_instruction_idx;
+        current->end_va = end_address;
+        for (; last_instruction_idx < program->query_len; last_instruction_idx++) {
+            void *ins = program->query_callback(program->query_ctx, last_instruction_idx);
+            current->query_end = last_instruction_idx;
+            if (backend.instruction_get_address(&backend, ins) >= end_address)
+                break;
+        }
+
+        if (!(i+1<visit->count)) current->query_end++;
+
+        current = dc_native_routine_create(program, (DCNativeRoutine){
+            .start_va = end_address
+        });
+    }
+
+    dynarr_free_element((void**)&program->native_routines, current);
+    free(addresses);
+    free(visit);
 }
 
 DCError DC_ProgramDecompile(DCProgram *program, 
@@ -1066,7 +1164,7 @@ DCError DC_ProgramDecompile(DCProgram *program,
         if (((size_t*)&backend)[i] == (size_t)NULL)
             return DC_ERROR_MISSING_BACKEND_CALLBACK;
 
-    DCNativeRoutine *routine = calloc(1, sizeof(DCNativeRoutine));
+    split_routines(program);
 
     /*
      * to-do: add a function which splits the initial big block into routines:
@@ -1076,88 +1174,142 @@ DCError DC_ProgramDecompile(DCProgram *program,
      *      where we can detect prologues and epilogues
      */
 
-    dc_native_basic_block_decompose(backend, routine, program);
+    for (DCNativeRoutine *routine = program->native_routines; routine; routine = routine->next) {
+        dc_native_basic_block_decompose(backend, routine, program);
 
-    DCLangRoutine *il_routine = calloc(1, sizeof(DCLangRoutine));
+        DCLangRoutine *il_routine = dynarr_alloc((void**)&program->lang_routines, sizeof(DCLangRoutine));
 
-    for (DCNativeBasicBlock *basic_block = routine->basic_blocks; basic_block; basic_block = basic_block->next) {
-        DCLangBasicBlock *il_bb = dynarr_alloc((void**)&il_routine->basic_blocks, 
-                                               sizeof(DCLangBasicBlock));
+        for (DCNativeBasicBlock *basic_block = routine->basic_blocks; basic_block; basic_block = basic_block->next) {
+            DCLangBasicBlock *il_bb = dynarr_alloc((void**)&il_routine->basic_blocks, 
+                                                   sizeof(DCLangBasicBlock));
 
-        il_bb->native_start_va = basic_block->start_va;
-        il_bb->native_end_va = basic_block->end_va;
+            il_bb->native_start_va = basic_block->start_va;
+            il_bb->native_end_va = basic_block->end_va;
 
-        for (size_t i = basic_block->query_begin; i < basic_block->query_end; i++)
-            backend.lift_instruction(&backend, program->query_callback(program->query_ctx, i), il_routine, il_bb);
+            for (size_t i = basic_block->query_begin; i < basic_block->query_end; i++)
+                backend.lift_instruction(&backend, program->query_callback(program->query_ctx, i), il_routine, il_bb);
+        }
+
+        for (DCLangBasicBlock *bb = il_routine->basic_blocks; bb; bb = bb->next) {
+            if (bb->go_to_true) bb->go_to_true = il_resolve(il_routine->basic_blocks, bb->go_to_true);
+            if (bb->go_to) bb->go_to = il_resolve(il_routine->basic_blocks, bb->go_to);
+            else bb->go_to = bb->next;
+        }
+
+        /*for (DCLangBasicBlock *b = il_routine->basic_blocks; b; b = b->next) {*/
+        /*    printf("bb:\n");*/
+        /*    for (DCLangInstruction *i = b->instructions; i; i = i->next)*/
+        /*        printf("%s %d\n", dc_lang_opcode_enum_str[i->opcode], i->immediate > 0x10000 ? i->variable->index : i->immediate);*/
+        /*}*/
+
+        /*for (DCLangBasicBlock *bb = il_routine->basic_blocks; bb; bb = bb->next) {*/
+        /*    printf("bb @ %p (n_in_degrees=%d), (is_header=%d)\n", (void*)bb->native_start_va, bb->n_in_degrees, bb->is_header);*/
+        /*    if (bb->go_to) printf("   | go_to %p\n", (void*)bb->go_to->native_start_va);*/
+        /*    if (bb->go_to_true) printf("   | go_to_true %p\n", (void*)bb->go_to_true->native_start_va);*/
+        /*}*/
+
+        il_routine->cfg = dc_traverse(il_routine->basic_blocks);
+        
+        /*dc_convert_to_ssa(il_routine, nodes);*/
+
+        /*printf("/*\n");*/
+        /*for (DCControlNode *node = nodes; node; node = node->next) {*/
+        /*    char prefix[8*4] = "";*/
+        /*    char lprefix[8*4] = "";*/
+        /*    for (int i = 0; i < node->level; i++) ((uint32_t*)prefix)[i] = (uint32_t)'    ';*/
+        /*    for (int i = 0; i < node->level+1; i++) ((uint32_t*)lprefix)[i] = (uint32_t)'    ';*/
+        /**/
+        /*    printf(" * ");*/
+        /*    switch (node->type) {*/
+        /*    case CONTROL_NODE_BODY: printf("%sbody (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
+        /*    case CONTROL_NODE_IF: printf("%sif (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
+        /*    case CONTROL_NODE_IF_ELSE: printf("%sif-else (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
+        /*    case CONTROL_NODE_WHILE: printf("%swhile (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
+        /*    case CONTROL_NODE_INVALID: printf("%sinvalid (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
+        /*    }*/
+        /**/
+        /*    for (DCLangInstruction *i = node->bb->instructions; i; i = i->next) {*/
+        /*        if ((i->opcode >= DC_IL_JMP && i->opcode <= DC_IL_JS) || i->opcode == DC_IL_RET) {*/
+        /*            printf(" * %s%-6s\n", lprefix, dc_lang_opcode_enum_str[i->opcode]);*/
+        /*            continue;*/
+        /*        }*/
+        /**/
+        /*        char s[8];*/
+        /*        printf(" * %s%-6s i%-2d ", lprefix, dc_lang_opcode_enum_str[i->opcode], i->size);*/
+        /*        switch (i->opcode) {*/
+        /*        case DC_IL_LOAD_IMM: printf("%ld\n", i->immediate); break;*/
+        /*        case DC_IL_LOAD_REG: */
+        /*        /*case DC_IL_STORE: printf("%s\n", il_var_name(i->variable, s)); break;*/
+        /*        default: puts(""); break;*/
+        /*        }*/
+        /*    }*/
+        /*}*/
+        /*printf("\n");*/
+
+        /*
+         * to-do: add validation checks to the CFG generation
+         */
     }
-
-    for (DCLangBasicBlock *bb = il_routine->basic_blocks; bb; bb = bb->next) {
-        if (bb->go_to_true) bb->go_to_true = il_resolve(il_routine->basic_blocks, bb->go_to_true);
-        if (bb->go_to) bb->go_to = il_resolve(il_routine->basic_blocks, bb->go_to);
-        else bb->go_to = bb->next;
-    }
-
-    /*for (DCLangBasicBlock *b = il_routine->basic_blocks; b; b = b->next) {*/
-    /*    printf("bb:\n");*/
-    /*    for (DCLangInstruction *i = b->instructions; i; i = i->next)*/
-    /*        printf("%s %d\n", dc_lang_opcode_enum_str[i->opcode], i->immediate > 0x10000 ? i->variable->index : i->immediate);*/
-    /*}*/
-
-    /*for (DCLangBasicBlock *bb = il_routine->basic_blocks; bb; bb = bb->next) {*/
-    /*    printf("bb @ %p (n_in_degrees=%d), (is_header=%d)\n", (void*)bb->native_start_va, bb->n_in_degrees, bb->is_header);*/
-    /*    if (bb->go_to) printf("   | go_to %p\n", (void*)bb->go_to->native_start_va);*/
-    /*    if (bb->go_to_true) printf("   | go_to_true %p\n", (void*)bb->go_to_true->native_start_va);*/
-    /*}*/
-
-    DCControlNode *nodes = dc_traverse(il_routine->basic_blocks);
-    
-    /*dc_convert_to_ssa(il_routine, nodes);*/
-
-    dc_optimizer_copy_propagation_safe(nodes);
-    dc_optimizer_simplify_shifts(il_routine);
-    dc_optimizer_remove_dead_code(il_routine);
-    dc_optimizer_remove_dead_common_code(il_routine);
-    dc_optimizer_remove_dead_variables(backend, il_routine);
-
-    /*printf("/*\n");*/
-    /*for (DCControlNode *node = nodes; node; node = node->next) {*/
-    /*    char prefix[8*4] = "";*/
-    /*    char lprefix[8*4] = "";*/
-    /*    for (int i = 0; i < node->level; i++) ((uint32_t*)prefix)[i] = (uint32_t)'    ';*/
-    /*    for (int i = 0; i < node->level+1; i++) ((uint32_t*)lprefix)[i] = (uint32_t)'    ';*/
-    /**/
-    /*    printf(" * ");*/
-    /*    switch (node->type) {*/
-    /*    case CONTROL_NODE_BODY: printf("%sbody (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
-    /*    case CONTROL_NODE_IF: printf("%sif (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
-    /*    case CONTROL_NODE_IF_ELSE: printf("%sif-else (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
-    /*    case CONTROL_NODE_WHILE: printf("%swhile (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
-    /*    case CONTROL_NODE_INVALID: printf("%sinvalid (%s): %p (next_in_level %p)\n", prefix, str_scope[node->scope], node->bb->native_start_va, node->next_in_level ? node->next_in_level->bb->native_start_va : 0); break;*/
-    /*    }*/
-    /**/
-    /*    for (DCLangInstruction *i = node->bb->instructions; i; i = i->next) {*/
-    /*        if ((i->opcode >= DC_IL_JMP && i->opcode <= DC_IL_JS) || i->opcode == DC_IL_RET) {*/
-    /*            printf(" * %s%-6s\n", lprefix, dc_lang_opcode_enum_str[i->opcode]);*/
-    /*            continue;*/
-    /*        }*/
-    /**/
-    /*        char s[8];*/
-    /*        printf(" * %s%-6s i%-2d ", lprefix, dc_lang_opcode_enum_str[i->opcode], i->size);*/
-    /*        switch (i->opcode) {*/
-    /*        case DC_IL_LOAD_IMM: printf("%ld\n", i->immediate); break;*/
-    /*        case DC_IL_LOAD_REG: */
-    /*        /*case DC_IL_STORE: printf("%s\n", il_var_name(i->variable, s)); break;*/
-    /*        default: puts(""); break;*/
-    /*        }*/
-    /*    }*/
-    /*}*/
-    /*printf("\n");*/
 
     /*
-     * to-do: add validation checks to the CFG generation
+     * set retvals
      */
-    print_routine(formatter, backend, il_routine, nodes, dst, n);
-    program->lang_routines = il_routine;
+    for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next) {
+        DCLangVariable *result = NULL;
+        for (DCLangVariable *v = il_routine->variables; v; v = v->next)
+            if (backend.operand_is_ret_val(&backend, v->native_operand)) {
+                il_routine->retval = v;
+                break;
+            }
+    }
+
+    /*
+     * post process call instructions with leading store instruction
+     */
+    for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next) {
+        for (DCLangBasicBlock *il_bb = il_routine->basic_blocks; il_bb; il_bb = il_bb->next) {
+            for (DCLangInstruction *ins = il_bb->instructions; ins;) {
+                DCLangInstruction *i0 = ins;
+                DCLangInstruction *i1 = ins->next;
+
+                if (i0 == NULL || i1 == NULL) break;
+                if (i0->opcode != DC_IL_CALL || i1->opcode != DC_IL_STORE) { ins = i1; continue; }
+
+                DCLangRoutine *resolved_routine = il_resolve_routine(program, i0->immediate);
+
+                /*
+                 * two scenarios:
+                 *  1. retval is not found, so we can dispose of the store stub
+                 *  2. retval is found, we should set the correct variable
+                 */
+                
+                if (resolved_routine->retval == NULL) {
+                    i0->next = i1->next;
+                    free(i1);
+                    ins = i0->next;
+                    continue;
+                }
+
+                i1->variable = il_get_variable(backend, il_routine, resolved_routine->retval->native_operand, false);
+                i1->size = i1->variable->size;
+                ins = i1->next;
+            }
+        }
+    }
+
+    /*
+     * optimizations (to-do: let user specify?)
+     */
+    for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next) {
+        dc_optimizer_copy_propagation_safe(il_routine->cfg);
+        dc_optimizer_simplify_shifts(il_routine);
+        dc_optimizer_remove_dead_code(il_routine);
+        dc_optimizer_remove_dead_common_code(il_routine);
+        dc_optimizer_remove_dead_variables(backend, il_routine);
+    }
+    
+    for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next)
+        print_routine(program, formatter, backend, il_routine, il_routine->cfg, dst, n);
 
     return DC_ERROR_NONE;
 }

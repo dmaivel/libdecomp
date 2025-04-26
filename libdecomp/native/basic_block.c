@@ -31,7 +31,7 @@ DCNativeBasicBlock *dc_native_basic_block_decompose(DCDisassemblerBackend backen
     DCVisitor *visit = dc_visitor_create(128);
     uintptr_t start_va = -1;
     uintptr_t end_va = 0;
-    for (size_t i = 0; i < program->query_len; i++) {
+    for (size_t i = routine->query_begin; i < routine->query_end; i++) {
         void *ins = program->query_callback(program->query_ctx, i);
         end_va = backend.instruction_get_address(&backend, ins);
         if (start_va == -1) start_va = end_va;
@@ -53,13 +53,13 @@ DCNativeBasicBlock *dc_native_basic_block_decompose(DCDisassemblerBackend backen
         .start_va = start_va
     });
 
-    size_t last_instruction_idx = 0;
+    size_t last_instruction_idx = routine->query_begin;
     for (int i = 0; i < visit->count; i++) {
         uint64_t end_address = addresses[i]; 
 
         current->query_begin = last_instruction_idx;
         current->end_va = end_address;
-        for (; last_instruction_idx < program->query_len; last_instruction_idx++) {
+        for (; last_instruction_idx < routine->query_end; last_instruction_idx++) {
             void *ins = program->query_callback(program->query_ctx, last_instruction_idx);
             current->query_end = last_instruction_idx;
             if (backend.instruction_get_address(&backend, ins) >= end_address)

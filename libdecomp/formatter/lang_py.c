@@ -1,8 +1,15 @@
 #include "libdecomp/formatter.h"
 #include <libdecomp/formatter/lang_py.h>
+#include <string.h>
 
 static void fmt_function_header(DCFormatterContext *ctx, char *dst, size_t n, DCLangRoutine *il_routine)
 {
+    /*
+     * seperate functions if multiple are emitted
+     */
+    if (strlen(dst))
+        DC_FormatAppend(dst, n, "\n");
+
     DC_FormatAppend(dst, n, "def ");
     DC_FormatAppendRoutine(ctx, dst, n, il_routine);
     DC_FormatAppend(dst, n, "(");

@@ -35,6 +35,9 @@ typedef struct DCNativeRoutine {
     struct DCNativeRoutine *next;
     
     DCNativeBasicBlock *basic_blocks;
+    
+    size_t query_begin;
+    size_t query_end;
 
     uintptr_t start_va;
     uintptr_t end_va;
@@ -72,6 +75,7 @@ typedef enum DCLangOpcodeEnum {
     DC_IL_JNS,
     DC_IL_JS,
     DC_IL_RET,
+    DC_IL_CALL,
     DC_IL_PHI,
     DC_IL_MAX_ENUM
 } DCLangOpcodeEnum;
@@ -189,8 +193,33 @@ typedef struct DCLangRoutine {
 
     DCLangVariable *retval;
 
+    DCControlNode *cfg;
+
     int n_params;
 } DCLangRoutine;
+
+typedef enum DCProgramSectionType {
+    DC_PROGRAM_SECTION_EMPTY = 0,
+    DC_PROGRAM_SECTION_CODE,
+    DC_PROGRAM_SECTION_DATA,
+    DC_PROGRAM_SECTION_SYMBOLS
+} DCProgramSectionType;
+
+typedef struct DCProgramSection {
+    DCProgramSectionType type;
+
+    union {
+        struct {
+
+        } code;
+        struct {
+
+        } data;
+        struct {
+
+        } symbols;
+    };
+} DCProgramSection;
 
 typedef struct DCProgram {
     DCDisassemblerBackend *disasm_backend;

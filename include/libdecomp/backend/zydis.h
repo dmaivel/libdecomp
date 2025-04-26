@@ -23,6 +23,18 @@ static bool dc_zy_instruction_is_jcc(DCDisassemblerBackend *self, void *iobj)
     return ins->info.mnemonic != ZYDIS_MNEMONIC_JMP;
 }
 
+static bool dc_zy_instruction_is_call(DCDisassemblerBackend *self, void *iobj)
+{
+    ZydisDisassembledInstruction *ins = iobj;
+    return ins->info.mnemonic == ZYDIS_MNEMONIC_CALL;
+}
+
+static bool dc_zy_instruction_is_ret(DCDisassemblerBackend *self, void *iobj)
+{
+    ZydisDisassembledInstruction *ins = iobj;
+    return ins->info.mnemonic == ZYDIS_MNEMONIC_RET;
+}
+
 static uint64_t dc_zy_instruction_get_jump_target(DCDisassemblerBackend *self, void *iobj)
 {
     ZydisDisassembledInstruction *ins = iobj;
@@ -219,6 +231,10 @@ static void dc_zy_lift_instruction(struct DCDisassemblerBackend *self, void *iob
         il_bb->go_to = (void*)self->instruction_get_jump_target(self, ins);
         add_ins(&il_bb->instructions, (DCLangInstruction){ .opcode = DC_IL_JMP });
         break;
+    case ZYDIS_MNEMONIC_CALL:
+        add_ins(&il_bb->instructions, (DCLangInstruction){ .opcode = DC_IL_CALL, .immediate = self->instruction_get_jump_target(self, ins) });
+        add_ins(&il_bb->instructions, (DCLangInstruction){ .opcode = DC_IL_STORE, .variable = NULL, .size = 32 });
+        break;
     case ZYDIS_MNEMONIC_RET:
         {
             for (DCLangVariable *v = il_routine->variables; v; v = v->next)
@@ -245,6 +261,8 @@ static DCDisassemblerBackend DC_DisassemblerZydis(int mode)
         .backend_dependent_data = data,
         .instruction_is_jump = dc_zy_instruction_is_jump,
         .instruction_is_jcc = dc_zy_instruction_is_jcc,
+        .instruction_is_call = dc_zy_instruction_is_call,
+        .instruction_is_ret = dc_zy_instruction_is_ret,
         .instruction_get_jump_target = dc_zy_instruction_get_jump_target,
         .instruction_get_jump_passed = dc_zy_instruction_get_jump_passed,
         .instruction_get_address = dc_zy_instruction_get_address,
