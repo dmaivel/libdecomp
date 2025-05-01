@@ -116,24 +116,20 @@ int32_t sub_1000(int32_t arg0)
     int32_t var1;
     int32_t var2;
     int32_t var3;
-    int32_t var4;
 
     var1 = arg0;
-    var3 = arg0;
-    var2 = -arg0;
-    var4 = var2;
-    while (var4 <= var1) {
-        if (var3 >= 0) {
-            var3 = (var3 + 7);
+    var2 = arg0;
+    var3 = -arg0;
+    while (var3 <= var1) {
+        if (var2 >= 0) {
+            var2 = (var2 + 7);
         }
         else {
-            var3 = (var3 + 9);
+            var2 = (var2 + 9);
         }
-        var4 = (var4 + 1);
-        var2 = var4;
+        var3 = (var3 + 1);
     }
-    var2 = var3;
-    return var3;
+    return var2;
 }
 ```
 
@@ -143,24 +139,20 @@ pub fn sub_1000(arg0: i32) i32 {
     var var1: i32 = undefined;
     var var2: i32 = undefined;
     var var3: i32 = undefined;
-    var var4: i32 = undefined;
 
     var1 = arg0;
-    var3 = arg0;
-    var2 = -arg0;
-    var4 = var2;
-    while (var4 <= var1) {
-        if (var3 >= 0) {
-            var3 = (var3 + 7);
+    var2 = arg0;
+    var3 = -arg0;
+    while (var3 <= var1) {
+        if (var2 >= 0) {
+            var2 = (var2 + 7);
         }
         else {
-            var3 = (var3 + 9);
+            var2 = (var2 + 9);
         }
-        var4 = (var4 + 1);
-        var2 = var4;
+        var3 = (var3 + 1);
     }
-    var2 = var3;
-    return var3;
+    return var2;
 }
 ```
 
@@ -170,22 +162,18 @@ def sub_1000(arg0):
     var1 = None
     var2 = None
     var3 = None
-    var4 = None
 
     var1 = arg0
-    var3 = arg0
-    var2 = -arg0
-    var4 = var2
-    while var4 <= var1:
-        if var3 >= 0:
-            var3 = (var3 + 7)
-
+    var2 = arg0
+    var3 = -arg0
+    while var3 <= var1:
+        if var2 >= 0:
+            var2 = (var2 + 7)
+        
         else:
-            var3 = (var3 + 9)
-
-        var4 = (var4 + 1)
-        var2 = var4
-
-    var2 = var3
-    return var3
+            var2 = (var2 + 9)
+        
+        var3 = (var3 + 1)
+    
+    return var2
 ```
