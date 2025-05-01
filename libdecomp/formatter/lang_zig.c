@@ -22,7 +22,7 @@ static void fmt_function_header(DCFormatterContext *ctx, char *dst, size_t n, DC
         }
     DC_FormatAppend(dst, n, ") ");
 
-    if (il_routine->retval) DC_FormatAppend(dst, n, "i%d ", il_routine->retval->size);
+    if (il_routine->retval_size) DC_FormatAppend(dst, n, "i%d ", il_routine->retval_size);
     DC_FormatAppend(dst, n, "{\n");
 
     for (DCLangVariable *v = il_routine->variables; v; v = v->next)

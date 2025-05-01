@@ -9,7 +9,7 @@ static void fmt_function_header(DCFormatterContext *ctx, char *dst, size_t n, DC
     if (strlen(dst))
         DC_FormatAppend(dst, n, "\n");
 
-    if (il_routine->retval) DC_FormatAppend(dst, n, "int%d_t ", il_routine->retval->size);
+    if (il_routine->retval_size) DC_FormatAppend(dst, n, "int%d_t ", il_routine->retval_size);
     else DC_FormatAppend(dst, n, "void ");
     DC_FormatAppendRoutine(ctx, dst, n, il_routine);
     DC_FormatAppend(dst, n, "(");

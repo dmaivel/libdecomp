@@ -786,12 +786,16 @@ void dc_optimizer_remove_dead_variables(DCDisassemblerBackend backend, DCLangRou
         }
     }
 
+    // for (int i = 0; i < n_variables; i++) {
+    //     printf("var%d read? %s\n", vars[i]->index, read[vars[i]->index] ? "yes" : "no");
+    // }
+    
     for (DCLangBasicBlock *bb = routine->basic_blocks; bb; bb = bb->next) {
         for (DCLangInstruction *i = bb->instructions; i;) {
             switch (i->opcode) {
             /*case DC_IL_LOAD_REG:*/
             case DC_IL_STORE:
-                if (!read[i->variable->index] && !backend.operand_is_ret_val(&backend, i->variable->native_operand)) {
+                if (!read[i->variable->index] /*&& !backend.operand_is_ret_val(&backend, i->variable->native_operand)*/) {
                     DCLangInstruction *n = i->next;
                     dynarr_free_element((void**)&bb->instructions, i);
                     i = n;
@@ -803,8 +807,11 @@ void dc_optimizer_remove_dead_variables(DCDisassemblerBackend backend, DCLangRou
     }
 
     for (int i = 0; i < n_variables; i++) {
-        if (!read[i] && !backend.operand_is_ret_val(&backend, vars[i]->native_operand))
+        if (!read[i] /*&& !backend.operand_is_ret_val(&backend, vars[i]->native_operand)*/) {
+            if (backend.operand_is_ret_val(&backend, vars[i]->native_operand))
+                routine->retval = NULL;
             dynarr_free_element((void**)&routine->variables, vars[i]);
+        }
     }
 
     j = 0;
@@ -888,179 +895,171 @@ void dc_optimizer_simplify_shifts(DCLangRoutine *routine)
     }
 }
 
-/*
- * to-do: unified eval function. ideally, we dont want this buffer functions bc the implementation
- * can begin to vary between them
- */
-bool operation_to_be_compared(DCLangInstruction *root[], int offset, int max, DCLangVariable *track)
+#include <assert.h>
+
+struct var_history {
+    DCLangInstruction *ins[32];
+    int n_ins;
+};
+
+static void var_history_add(struct var_history *var, DCLangInstruction *ins)
 {
-    DCLangVariable *stack[16] = { NULL };
-    int stack_offset = 0;
-    for (int j = offset; j < max; j++) {
-        DCLangInstruction *i = root[j];
-
-        switch (i->opcode) {
-        case DC_IL_LOAD_REG:
-            stack[stack_offset++] = i->variable;
-            break;
-        case DC_IL_STORE:
-            stack_offset--;
-            break;
-        case DC_IL_LOAD_IMM:
-            stack[stack_offset++] = NULL;
-            break;
-        case DC_IL_ADD:
-        case DC_IL_SUB:
-        case DC_IL_AND:
-        case DC_IL_OR:
-        case DC_IL_XOR:
-        case DC_IL_SHL:
-        case DC_IL_SHR:
-            stack[--stack_offset] = NULL;
-            break;
-        case DC_IL_CMP:
-            for (int i = 0; i < stack_offset; i++)
-                if (stack[i] == track) return true;
-            stack_offset -= 2;
-        default:
-             break;
-        }
-
-        if (stack_offset == 0)
-            return false;
-    }
-
-    return false;
+    assert(var->n_ins < 32);
+    var->ins[var->n_ins++] = ins;
 }
 
-void dc_optimizer_copy_propagation_safe(DCControlNode *root)
+void dc_optimizer_copy_propagation(DCControlNode *root, DCLangRoutine *routine)
 {
+    int n_variables = 0;
+    for (DCLangVariable *v = routine->variables; v; v = v->next, n_variables++);
+
+    struct var_history variables[n_variables];
+    struct var_history stack[32];
+    int sp;
+
     for (DCControlNode *node = root; node; node = node->next) {
+        memset(variables, 0, sizeof(variables));
+        memset(stack, 0, sizeof(stack));
+        sp = 0;
+
+        DCLangInstruction *prev = NULL;
         for (DCLangInstruction *i = node->bb->instructions; i;) {
-            DCLangInstruction *i0 = i;
-            DCLangInstruction *i1 = i->next;
-
-            if (i0->opcode != DC_IL_LOAD_REG || (i1->opcode != DC_IL_STORE && i1->opcode != DC_IL_RET)) {
-                i = i1;
-                continue;
-            }
-
-            DCLangVariable *src = i0->variable;
-            DCLangVariable *dst = i1->variable;
-
-            for (DCLangInstruction *k = i1->next; k; k = k->next) {
-                if (k->opcode == DC_IL_STORE && (k->variable == src || k->variable == dst))
+            const DCLangVariable *iv = i->variable;
+            assert(sp >= 0 && sp < 32);
+            // printf("> %s (%d)\n", dc_lang_opcode_enum_str[i->opcode], sp);
+            switch (i->opcode) {
+            case DC_IL_LOAD_IMM:
+            case DC_IL_CALL:
+                var_history_add(&stack[sp++], i);
+                prev = i;
+                i = i->next;
+                break;
+            case DC_IL_LOAD_REG:    
+                // if theres no history, nothing we can do
+                if (variables[iv->index].n_ins == 0) {
+                    var_history_add(&stack[sp++], i);
+                    prev = i;
+                    i = i->next;
                     break;
+                }
 
-                if (k->variable == dst)
-                    k->variable = src;
+                // printf("variable %d referenced with a history of %d instructions: ", iv->index, variables[iv->index].n_ins);
+                // for (int i = 0; i < variables[iv->index].n_ins; i++) printf("[%s] ", dc_lang_opcode_enum_str[variables[iv->index].ins[i]->opcode]);
+                // if (i->next && i->next->opcode == DC_IL_STORE) printf("... attempted store into variable %d", i->next->variable->index);
+                // puts("");
+                // exit(1);
+
+                // create a new list of instructions that are copied from the history
+                DCLangInstruction *new = NULL, *last = NULL;
+                for (int j = 0; j < variables[iv->index].n_ins; j++) {
+                    DCLangInstruction *dst = dynarr_alloc((void**)&new, sizeof(DCLangInstruction));
+                    memcpy(dst, variables[iv->index].ins[j], sizeof(DCLangInstruction));
+                    dst->next = NULL;
+                    last = dst;
+                }
+
+                DCLangInstruction *next = i->next;
+
+                if (prev) prev->next = new;
+                else node->bb->instructions = new;
+
+                last->next = next;
+                free(i);
+                i = new;
+                // attempts++;
+
+                memset(variables, 0, sizeof(variables));
+                
+                // if (attempts > max_attempts) return;
+                // prev = new_prev;
+                // var_history_add(&stack[sp++], i);
+                // prev = i;
+                // i = i->next;
+
+                /*
+                 * to-do: figure out recursive death for arm64
+                 */
+                // dc_optimizer_copy_propagation(root, routine);
+                // return;
+                break;
+            case DC_IL_STORE:
+                assert(sp != 0);
+                variables[iv->index] = stack[--sp];
+                stack[sp].n_ins = 0;
+                prev = i;
+                i = i->next;
+                break;
+            case DC_IL_JMP ... DC_IL_JS:
+                prev = i;
+                i = i->next;
+                break;
+            default:
+                assert(sp != 0);
+                var_history_add(&stack[sp - 1], i);
+                prev = i;
+                i = i->next;
+                break;
             }
-
-            i = i1;
         }
     }
 }
 
-void dc_optimizer_copy_propagation(DCControlNode *root)
+struct var_history_2d {
+    DCLangInstruction *ins[512][256];
+    int n_ins[512];
+    int n_new;
+};
+
+static void var_history_2d_add(struct var_history_2d *var, DCLangInstruction *ins)
 {
-    /*for (DCControlNode *node = root; node; node = node->next) {*/
-    /*    for (DCLangInstruction *i0 = node->bb->instructions; i0 && i0->next;) {*/
-    /*        DCLangInstruction *i1 = i0->next;*/
-    /*        if (i0->opcode != DC_IL_LOAD_REG || (i1->opcode != DC_IL_STORE && i1->opcode != DC_IL_RET)) {*/
-    /*            i0 = i1;*/
-    /*            continue;*/
-    /*        }*/
-    /**/
-    /*        DCLangVariable *src = i0->variable;*/
-    /*        DCLangVariable *dst = i1->variable;*/
-    /**/
-    /*        for (DCLangInstruction *i = i1->next; i; i = i->next) {*/
-    /**/
-    /*        }*/
-    /*    }*/
-    /*}*/
+    assert(var->n_ins[var->n_new] < 256);
+    var->ins[var->n_new][var->n_ins[var->n_new]++] = ins;
+}
 
-    DCLangInstruction *instructions[256];
+static void var_history_2d_new(struct var_history_2d *var, DCLangInstruction *ins)
+{
+    assert(var->n_new < 512);
+    var->n_new++;
+}
 
-    int j = 0;
+void dc_optimizer_remove_dead_code_v2(DCControlNode *root, DCLangRoutine *routine)
+{
+    int n_variables = 0;
+    for (DCLangVariable *v = routine->variables; v; v = v->next, n_variables++);
+
+    struct var_history_2d variables[n_variables];
+    memset(variables, 0, sizeof(variables));
+    
     for (DCControlNode *node = root; node; node = node->next) {
-        if (node->type == CONTROL_NODE_WHILE) continue;
-        for (DCLangInstruction* i = node->bb->instructions; i; i = i->next) {
-            instructions[j++] = i;
-        }
-    }
-
-    for (int i = 0; i < j - 1;) {
-        DCLangInstruction *i0 = instructions[i];
-        DCLangInstruction *i1 = instructions[i + 1];
-
-        if (i0->opcode != DC_IL_LOAD_REG || (i1->opcode != DC_IL_STORE && i1->opcode != DC_IL_RET)) {
-            i++;
-            continue;
-        }
-
-        DCLangVariable *src = i0->variable;
-        DCLangVariable *dst = i1->variable;
-
-        for (int k = i + 2; k < j - 1; k++) {
-            if (instructions[k]->opcode == DC_IL_STORE && (instructions[k]->variable == src || instructions[k]->variable == dst))
+        DCLangInstruction *prev = NULL;
+        for (DCLangInstruction *i = node->bb->instructions; i;) {
+            const DCLangVariable *iv = i->variable;
+            
+            switch (i->opcode) {
+            case DC_IL_LOAD_REG:
+                var_history_2d_add(&variables[iv->index], i);
                 break;
-
-            if (instructions[k]->variable == dst)
-                instructions[k]->variable = src;
+            case DC_IL_STORE:
+                var_history_2d_new(&variables[iv->index], i);
+                break;
+            default:
+                break;
+            }
+            
+            prev = i;
+            i = i->next;
         }
-
-        i += 2;
     }
 
-    /*for (DCControlNode *node = root; node; node = node->next) {*/
-    /*    DCLangInstruction *root_instructions = node->bb->instructions;*/
-    /*    if (root_instructions == NULL)*/
-    /*        continue;*/
-    /**/
-    /*    for (DCLangInstruction *i0 = root_instructions; i0->next;) {*/
-    /*        DCLangInstruction *i1 = i0->next;*/
-    /**/
-    /*        if (i0->opcode != DC_IL_LOAD_REG || i1->opcode != DC_IL_STORE) {*/
-    /*            i0 = i1;*/
-    /*            continue;*/
-    /*        }*/
-    /**/
-    /*        DCLangVariable *src = i0->variable;*/
-    /*        DCLangVariable *dst = i1->variable;*/
-    /**/
-    /*        bool broke = false;*/
-    /*        for (DCLangInstruction *i = i1->next; i; i = i->next) {*/
-    /*            if (i->opcode == DC_IL_STORE && (i->variable == src || i->variable == dst)) {*/
-    /*                /*broke = true;*/
-    /*                break;*/
-    /*            }*/
-    /**/
-    /*            if (i->variable == dst)*/
-    /*                i->variable = src;*/
-    /*        }*/
-    /**/
-    /*        if (!broke) {*/
-    /*            for (DCControlNode *n = node->next; n; n = n->next) {*/
-    /*                if (broke) break;*/
-    /*                /*if (n->type != CONTROL_NODE_BODY) break;*/
-    /*                for (DCLangInstruction *i = n->bb->instructions; i; i = i->next) {*/
-    /*                    if (i->opcode == DC_IL_STORE && (i->variable == src || i->variable == dst)) {*/
-    /*                        /*broke = true;*/
-    /*                        break;*/
-    /*                    }*/
-    /**/
-    /*                    if (i->variable == dst)*/
-    /*                        i->variable = src;*/
-    /*                }*/
-    /*            }*/
-    /*        }*/
-    /**/
-    /*        printf("broke=%d\n", broke);*/
-    /**/
-    /*        i0 = i1;*/
-    /*    }*/
-    /*} */
+    /* for (int j = 0; j < n_variables; j++) { */
+    /*     printf("var%d stats:\n", j); */
+    /*     if (variables[j].n_new < 32) { */
+    /*         for (int i = 1; i < variables[j].n_new + 1; i++) { */
+    /*             printf("the %d stored value was used %d times\n", i, variables[j].n_ins[i]); */
+    /*         } */
+    /*     } */
+    /*     else printf("cant print stats; n_new = %d\n", variables[j].n_new); */
+    /* } */
 }
 
 static void print_routine(DCProgram *program, DCFormatterContext formatter, DCDisassemblerBackend backend, DCLangRoutine *il_routine, DCControlNode *nodes, char *dst, size_t n)
@@ -1259,6 +1258,7 @@ DCError DC_ProgramDecompile(DCProgram *program,
         for (DCLangVariable *v = il_routine->variables; v; v = v->next)
             if (backend.operand_is_ret_val(&backend, v->native_operand)) {
                 il_routine->retval = v;
+                il_routine->retval_size = v->size;
                 break;
             }
     }
@@ -1301,11 +1301,17 @@ DCError DC_ProgramDecompile(DCProgram *program,
      * optimizations (to-do: let user specify?)
      */
     for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next) {
-        dc_optimizer_copy_propagation_safe(il_routine->cfg);
+        /*
+         * to-do: do this automatically by making the function recurse
+         */
+        for (int i = 0; i < 5; i++)
+            dc_optimizer_copy_propagation(il_routine->cfg, il_routine);
+
         dc_optimizer_simplify_shifts(il_routine);
         dc_optimizer_remove_dead_code(il_routine);
         dc_optimizer_remove_dead_common_code(il_routine);
         dc_optimizer_remove_dead_variables(backend, il_routine);
+        /* dc_optimizer_remove_dead_code_v2(il_routine->cfg, il_routine); */
     }
     
     for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next)

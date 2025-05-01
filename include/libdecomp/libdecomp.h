@@ -192,6 +192,7 @@ typedef struct DCLangRoutine {
     DCLangVariable *variables;
 
     DCLangVariable *retval;
+    int retval_size; // had to add this in the event retval is optimized out
 
     DCControlNode *cfg;
 

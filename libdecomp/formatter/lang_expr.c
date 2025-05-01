@@ -3,7 +3,7 @@
 
 static void fmt_function_header(DCFormatterContext *ctx, char *dst, size_t n, DCLangRoutine *il_routine)
 {
-    if (il_routine->retval) DC_FormatAppend(dst, n, "u%d@%lx(", il_routine->retval->size, il_routine->basic_blocks[0].native_start_va);
+    if (il_routine->retval_size) DC_FormatAppend(dst, n, "u%d@%lx(", il_routine->retval_size, il_routine->basic_blocks[0].native_start_va);
     else DC_FormatAppend(dst, n, "none@%lx(", il_routine->basic_blocks[0].native_start_va);
 
     int j = 0;

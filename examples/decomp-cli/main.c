@@ -32,9 +32,8 @@ static const char *usage_message =
     "  -b [base_addr]             : specify base address (default: 0x1000)\n"            
     "  -c                         : enable colored output (default: false)";
 
-static const char *hl_types[] = {"int8_t",  "uint8_t",  "int16_t", "uint16_t",
-                                 "int32_t", "uint32_t", "int64_t", "uint64_t",
-                                 "i8",      "i16",      "i32",     "i64"};
+static const char *hl_types[] = { "int8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t",
+                                  "int64_t", "uint64_t", "i8", "i16", "i32", "i64", "void"};
 static uint32_t hl_types_h[ARR_LEN(hl_types)] = { -1 };
 
 static const char *hl_keyws[] = {"for", "while", "if", "else", "return",
