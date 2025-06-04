@@ -6,6 +6,7 @@
 #include "Zydis/SharedTypes.h"
 #include <Zydis/Zydis.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 typedef struct DCZydisData {
     int mode;
