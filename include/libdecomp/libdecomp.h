@@ -235,6 +235,8 @@ typedef struct DCProgram {
     DCNativeRoutine *native_routines;
     DCLangRoutine *lang_routines;
     bool bad;
+
+    int optimization_level;
 } DCProgram;
 
 void add_ins(DCLangInstruction **root, DCLangInstruction ins);
@@ -298,6 +300,15 @@ void DC_ProgramSetBackend(DCProgram *program,
 */
 void DC_ProgramSetFormatter(DCProgram *program,
                             struct DCFormatterContext *formatter);
+
+/**
+ * @brief Set optimization level (may be either 0 or 1)
+ *        TODO: Replace with list of optimization functions
+ *
+ * @param program Program
+ * @param level Optimization level */
+void DC_ProgramSetOptimizationLevel(DCProgram *program,
+                                    int level);
 
 /**
 * @brief Decompile `program` as if it were loaded at `base_address`

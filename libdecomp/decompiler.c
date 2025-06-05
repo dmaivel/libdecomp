@@ -1145,7 +1145,7 @@ static void split_routines(DCProgram *program)
     free(visit);
 }
 
-DCError DC_ProgramDecompile(DCProgram *program, 
+DCError DC_ProgramDecompile(DCProgram *program,
                             char *dst,
                             const size_t n)
 {
@@ -1298,20 +1298,22 @@ DCError DC_ProgramDecompile(DCProgram *program,
     }
 
     /*
-     * optimizations (to-do: let user specify?)
+     * optimizations
      */
-    for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next) {
-        /*
-         * to-do: do this automatically by making the function recurse
-         */
-        for (int i = 0; i < 5; i++)
-            dc_optimizer_copy_propagation(il_routine->cfg, il_routine);
+    if (program->optimization_level != 0) {
+        for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next) {
+            /*
+            * to-do: do this automatically by making the function recurse
+            */
+            for (int i = 0; i < 5; i++)
+                dc_optimizer_copy_propagation(il_routine->cfg, il_routine);
 
-        dc_optimizer_simplify_shifts(il_routine);
-        dc_optimizer_remove_dead_code(il_routine);
-        dc_optimizer_remove_dead_common_code(il_routine);
-        dc_optimizer_remove_dead_variables(backend, il_routine);
-        /* dc_optimizer_remove_dead_code_v2(il_routine->cfg, il_routine); */
+            dc_optimizer_simplify_shifts(il_routine);
+            dc_optimizer_remove_dead_code(il_routine);
+            dc_optimizer_remove_dead_common_code(il_routine);
+            dc_optimizer_remove_dead_variables(backend, il_routine);
+            /* dc_optimizer_remove_dead_code_v2(il_routine->cfg, il_routine); */
+        }
     }
     
     for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next)

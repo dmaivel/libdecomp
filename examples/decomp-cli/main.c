@@ -20,7 +20,7 @@
 #define ARR_LEN(x) (sizeof(x) / sizeof(*x))
 
 static const char *usage_message =
-    "usage: decomp-cli input_path [-m arch] [-l lang] [-v variable_prefix] [-a argument_prefix] [-s subroutine_prefix] [-b base_addr] [-c]\n"
+    "usage: decomp-cli input_path [-m arch] [-l lang] [-v variable_prefix] [-a argument_prefix] [-s subroutine_prefix] [-b base_addr] [-O level] [-c]\n"
     "\n"
     "options:\n"
     "  input_path                 : path to input binary\n"
@@ -29,7 +29,8 @@ static const char *usage_message =
     "  -v [variable_prefix]       : specify variable prefix (default: var)\n"
     "  -a [argument_prefix]       : specify argument prefix (default: arg)\n"
     "  -s [subroutine_prefix]     : specify subroutine prefix (default: sub_)\n"
-    "  -b [base_addr]             : specify base address (default: 0x1000)\n"            
+    "  -b [base_addr]             : specify base address (default: 0x1000)\n"
+    "  -O [level]                 : specify optimization level (0 or 1) (default: 1)\n"
     "  -c                         : enable colored output (default: false)";
 
 static const char *hl_types[] = { "int8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t",
@@ -165,6 +166,7 @@ int main(int argc, char **argv)
     char *override_sub = NULL;
 
     uint64_t base_address = 0x1000;
+    int optimization_level = 1;
     
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] != '-') { 
@@ -220,6 +222,10 @@ int main(int argc, char **argv)
             sscanf(argv[i + 1], "%llx", &base_address);
             i++;
             break;
+        case 'O':
+            optimization_level = atoi(argv[i + 1]);
+            i++;
+            break;
         case 'c':
             colored = true;
             break;
@@ -273,6 +279,8 @@ int main(int argc, char **argv)
     DCDisassemblerBackend backend = DC_DisassemblerCapstone(arch, mode);
     DC_ProgramSetBackend(program, &backend);
     DC_ProgramSetFormatter(program, formatter);
+
+    DC_ProgramSetOptimizationLevel(program, optimization_level);
 
     char buffer[1024];
     DC_ProgramDecompile(program, 
