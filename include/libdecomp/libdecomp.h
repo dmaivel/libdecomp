@@ -112,6 +112,7 @@ static char dc_lang_opcode_enum_str[DC_IL_MAX_ENUM][12] = {
     "jns",
     "js",
     "ret",
+    "call",
     "phi"
 };
 
@@ -306,7 +307,8 @@ void DC_ProgramSetFormatter(DCProgram *program,
  *        TODO: Replace with list of optimization functions
  *
  * @param program Program
- * @param level Optimization level */
+ * @param level Optimization level
+ */
 void DC_ProgramSetOptimizationLevel(DCProgram *program,
                                     int level);
 

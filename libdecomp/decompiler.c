@@ -394,6 +394,19 @@ static DCLangOpcodeEnum dc_eval(DCProgram *program, DCFormatterContext formatter
     DCLangOpcodeEnum jmp_op = -1;
 
     for (DCLangInstruction *i = il_bb->instructions; i; i = i->next) {
+#if 0
+        DC_FormatAppend(dst, n, "%s ", dc_lang_opcode_enum_str[i->opcode]);
+        switch (i->opcode) {
+        case DC_IL_LOAD_REG:
+        case DC_IL_STORE:
+            DC_FormatAppend(dst, n, "v%d", i->variable->index);
+            break;
+        default:
+            break;
+        }
+        DC_FormatAppend(dst, n, "\n");
+#endif
+
         switch (i->opcode) {
         case DC_IL_LOAD_REG:
             strcpy(elem, "");
@@ -908,97 +921,184 @@ static void var_history_add(struct var_history *var, DCLangInstruction *ins)
     var->ins[var->n_ins++] = ins;
 }
 
-void dc_optimizer_copy_propagation(DCControlNode *root, DCLangRoutine *routine)
-{
+void dc_optimizer_copy_propagation(DCControlNode *root, DCLangRoutine *routine) {
     int n_variables = 0;
     for (DCLangVariable *v = routine->variables; v; v = v->next, n_variables++);
+
+    /*
+     * var_history contains the instructions which need to be executed in order for
+     * us to evaluate the value of some element within the stack. this optimization
+     * pass essentially requires us to evaluate the IL code, but not execute it fully;
+     *
+     * instead of calculating values within the stack, the stack consists of "histories,"
+     * these historys allow us to determine how we could evaluate this element if the
+     * values were known (we obviously do not know the value of something like arg0)
+     *
+     * take for example this program:
+     * load v0
+     * load v1
+     * add
+     * store v2
+     * load v2
+     * load v3
+     * add
+     * store v4
+     *
+     * this program is essentially:
+     * v2 = (v0 + v1)
+     * v4 = (v2 + v3)
+     *
+     * if we wish to perform copy propagation, we can propagate the value of v2 to the
+     * v4 expression, like so:
+     *
+     * v4 = ((v0 + v1) + v3)
+     *
+     * however, how do we even get this result? this is where var_history comes in.
+     * we maintain two histories:
+     * 1. variable history: each variable within the routine is assigned its own history
+     *                      when we reach an instruction like 'store', we can write its
+     *                      tracked history to this variable history
+     * 2. stack history: this history consists of the histories of elements within the
+     *                   stack itself. we can construct this history until we reach a
+     *                   store, in which the history will move off of the stack and into
+     *                   a variable specific history
+     *
+     * lets go through our example:
+     * -------------------------------------------------------------------------------------
+     * load v0
+     * STACK: { { v0 } }
+     * VARS: { v0{}, v1{}, v2{}, v3{}, v4{} }
+     *
+     * load v1
+     * STACK { { load v0 }, { load v1 } }
+     *
+     * add
+     * STACK { { load v0, load v1, add } } << HISTORIES FROM THE PREVIOUS TWO ELEMENTS WERE
+     *                                        COMBINED INTO ONE HISTORY, WITH THE ADD OPCODE
+     *                                        BEING ADDED TO THE NEW HISTORY
+     *
+     * store v2
+     * STACK { }
+     * VARS: { v0{}, v1{}, v2{ load v0, load v1, add }, v4{} } << NOTICE THE ELEMENT WAS MOVED
+     *                                                            OFF OF THE STACK AND INTO V2
+     *
+     * load v2
+     * REMOVE AND REPLACE THIS INSTRUCTION WITH HISTORY PRESENT V2
+     * RESTART FROM BEGINNING OF BASIC BLOCK
+     * --------------------------------------------------------------------------------------
+     *
+     * essentially, the same is repeated for v4. its important to note that when we encounter
+     * an instruction like add, which takes in two operands from the stack, that we merge the
+     * histories of the last two elements on the stack, in order for our add instruction to
+     * maintain correctness. otherwise, we may only copy a partial definition, like { load v1, add },
+     * which is obviously incorrect as it ignored load v0, overwriting it with load v1.
+     */
 
     struct var_history variables[n_variables];
     struct var_history stack[32];
     int sp;
 
-    for (DCControlNode *node = root; node; node = node->next) {
-        memset(variables, 0, sizeof(variables));
-        memset(stack, 0, sizeof(stack));
-        sp = 0;
+    bool changed_in_iteration = true;
+    while (changed_in_iteration) {
+        changed_in_iteration = false;
+        for (DCControlNode *node = root; node && !changed_in_iteration; node = node->next) {
+            memset(variables, 0, sizeof(struct var_history) * n_variables);
+            memset(stack, 0, sizeof(struct var_history) * 32);
+            sp = 0;
 
-        DCLangInstruction *prev = NULL;
-        for (DCLangInstruction *i = node->bb->instructions; i;) {
-            const DCLangVariable *iv = i->variable;
-            assert(sp >= 0 && sp < 32);
-            // printf("> %s (%d)\n", dc_lang_opcode_enum_str[i->opcode], sp);
-            switch (i->opcode) {
-            case DC_IL_LOAD_IMM:
-            case DC_IL_CALL:
-                var_history_add(&stack[sp++], i);
-                prev = i;
-                i = i->next;
-                break;
-            case DC_IL_LOAD_REG:    
-                // if theres no history, nothing we can do
-                if (variables[iv->index].n_ins == 0) {
-                    var_history_add(&stack[sp++], i);
-                    prev = i;
-                    i = i->next;
+            DCLangInstruction *prev_ins = NULL;
+            DCLangInstruction *current_ins = node->bb->instructions;
+            while (current_ins && !changed_in_iteration) {
+                DCLangInstruction *next_ins = current_ins->next;
+                const DCLangVariable *iv = current_ins->variable;
+                assert(sp >= 0 && sp < 32);
+
+                switch (current_ins->opcode) {
+                case DC_IL_LOAD_IMM:
+                case DC_IL_CALL:
+                    var_history_add(&stack[sp++], current_ins);
+                    break;
+                case DC_IL_LOAD_REG:
+                    if (iv && variables[iv->index].n_ins > 0) {
+                        // circular dependency check
+                        // TODO fix arm64 issue
+                        if (variables[iv->index].n_ins == 1
+                            && variables[iv->index].ins[0]->opcode == DC_IL_LOAD_REG
+                            && variables[variables[iv->index].ins[0]->variable->index].n_ins == 1
+                            && variables[variables[iv->index].ins[0]->variable->index].ins[0]->variable == iv) {
+                            variables[iv->index].n_ins = 0;
+                            variables[variables[iv->index].ins[0]->variable->index].n_ins = 0;
+                            break;
+                        }
+
+                        DCLangInstruction *new_seq_head = NULL, *new_seq_tail = NULL;
+                        for (int j = 0; j < variables[iv->index].n_ins; j++) {
+                            DCLangInstruction *original_hist_ins = variables[iv->index].ins[j];
+                            DCLangInstruction *dst = dynarr_alloc((void**)&new_seq_head, sizeof(DCLangInstruction));
+                            memcpy(dst, original_hist_ins, sizeof(DCLangInstruction));
+                            dst->next = NULL;
+                            if (!new_seq_head) new_seq_head = dst;
+                            if (new_seq_tail) new_seq_tail->next = dst;
+                            new_seq_tail = dst;
+                        }
+
+                        if (prev_ins) prev_ins->next = new_seq_head;
+                        else node->bb->instructions = new_seq_head;
+
+                        new_seq_tail->next = next_ins;
+                        free(current_ins);
+
+                        /* current_ins = new_seq_head; */
+                        /* next_ins = new_seq_head->next; */
+                        changed_in_iteration = true;
+                    } else {
+                        var_history_add(&stack[sp++], current_ins);
+                    }
+                    break;
+                case DC_IL_STORE:
+                    assert(sp != 0);
+                    assert(iv);
+                    variables[iv->index] = stack[--sp];
+                    stack[sp].n_ins = 0;
+                    break;
+                case DC_IL_ADD:
+                case DC_IL_SUB:
+                case DC_IL_MUL:
+                case DC_IL_DIV:
+                case DC_IL_SHL:
+                case DC_IL_SHR:
+                case DC_IL_AND:
+                case DC_IL_OR:
+                case DC_IL_XOR:
+                case DC_IL_WRITE:
+                    assert(sp >= 2);
+                    {
+                        struct var_history *hist_operand2 = &stack[sp - 1];
+                        struct var_history *hist_operand1 = &stack[sp - 2];
+
+                        assert(hist_operand1->n_ins + hist_operand2->n_ins + 1 <= 32);
+
+                        // merge histories; hist_operand1 = hist_operand1 + hist_operand2 + current_instruction
+                        for (int k = 0; k < hist_operand2->n_ins; k++) {
+                            var_history_add(hist_operand1, hist_operand2->ins[k]);
+                        }
+                        var_history_add(hist_operand1, current_ins); // add the instruction itself
+                        hist_operand2->n_ins = 0; // clear consumed operand 2 history
+                        sp--; // pop one operand as result is written into hist_operand1's original slot
+                    }
+                    break;
+                case DC_IL_NEG:
+                case DC_IL_READ:
+                    assert(sp >= 1);
+                    var_history_add(&stack[sp-1], current_ins);
+                    break;
+                case DC_IL_JMP ... DC_IL_JS:
+                    break;
+                default:
                     break;
                 }
-
-                // printf("variable %d referenced with a history of %d instructions: ", iv->index, variables[iv->index].n_ins);
-                // for (int i = 0; i < variables[iv->index].n_ins; i++) printf("[%s] ", dc_lang_opcode_enum_str[variables[iv->index].ins[i]->opcode]);
-                // if (i->next && i->next->opcode == DC_IL_STORE) printf("... attempted store into variable %d", i->next->variable->index);
-                // puts("");
-                // exit(1);
-
-                // create a new list of instructions that are copied from the history
-                DCLangInstruction *new = NULL, *last = NULL;
-                for (int j = 0; j < variables[iv->index].n_ins; j++) {
-                    DCLangInstruction *dst = dynarr_alloc((void**)&new, sizeof(DCLangInstruction));
-                    memcpy(dst, variables[iv->index].ins[j], sizeof(DCLangInstruction));
-                    dst->next = NULL;
-                    last = dst;
-                }
-
-                DCLangInstruction *next = i->next;
-
-                if (prev) prev->next = new;
-                else node->bb->instructions = new;
-
-                last->next = next;
-                free(i);
-                i = new;
-                // attempts++;
-
-                memset(variables, 0, sizeof(variables));
-                
-                // if (attempts > max_attempts) return;
-                // prev = new_prev;
-                // var_history_add(&stack[sp++], i);
-                // prev = i;
-                // i = i->next;
-
-                /*
-                 * to-do: figure out recursive death for arm64
-                 */
-                // dc_optimizer_copy_propagation(root, routine);
-                // return;
-                break;
-            case DC_IL_STORE:
-                assert(sp != 0);
-                variables[iv->index] = stack[--sp];
-                stack[sp].n_ins = 0;
-                prev = i;
-                i = i->next;
-                break;
-            case DC_IL_JMP ... DC_IL_JS:
-                prev = i;
-                i = i->next;
-                break;
-            default:
-                assert(sp != 0);
-                var_history_add(&stack[sp - 1], i);
-                prev = i;
-                i = i->next;
-                break;
+                prev_ins = current_ins;
+                current_ins = next_ins;
             }
         }
     }
@@ -1302,12 +1402,7 @@ DCError DC_ProgramDecompile(DCProgram *program,
      */
     if (program->optimization_level != 0) {
         for (DCLangRoutine *il_routine = program->lang_routines; il_routine; il_routine = il_routine->next) {
-            /*
-            * to-do: do this automatically by making the function recurse
-            */
-            for (int i = 0; i < 5; i++)
-                dc_optimizer_copy_propagation(il_routine->cfg, il_routine);
-
+            dc_optimizer_copy_propagation(il_routine->cfg, il_routine);
             dc_optimizer_simplify_shifts(il_routine);
             dc_optimizer_remove_dead_code(il_routine);
             dc_optimizer_remove_dead_common_code(il_routine);
